@@ -3,6 +3,12 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
+import SmartInsights from '../components/SmartInsights';
+import CarbonScore from '../components/CarbonScore';
+import SmartSuggestions from '../components/SmartSuggestions';
+import ProgressTracker from '../components/ProgressTracker';
+import toast from 'react-hot-toast';
+import { generatePDFReport } from '../utils/pdfExport';
 
 const CATEGORY_COLORS = {
   transport: '#6366f1',
@@ -40,20 +46,43 @@ function AnimatedNumber({ value, suffix = '' }) {
 export default function Dashboard() {
   const { user } = useAuth();
   const [summary, setSummary] = useState(null);
+  const [advanced, setAdvanced] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    fetchSummary();
+    fetchData();
   }, []);
 
-  const fetchSummary = async () => {
+  const fetchData = async () => {
     try {
-      const { data } = await api.get('/logs/summary');
-      setSummary(data);
+      const [summaryRes, advancedRes] = await Promise.all([
+        api.get('/logs/summary'),
+        api.get('/logs/advanced'),
+      ]);
+      setSummary(summaryRes.data);
+      setAdvanced(advancedRes.data);
     } catch (err) {
-      console.error('Failed to load summary:', err);
+      console.error('Failed to load dashboard:', err);
+      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExportPDF = async () => {
+    setExporting(true);
+    try {
+      const result = await generatePDFReport(user?.name, summary, advanced);
+      if (result.success) {
+        toast.success(`Report exported: ${result.fileName}`);
+      } else {
+        toast.error(result.error || 'Failed to export PDF');
+      }
+    } catch (error) {
+      toast.error('Error exporting PDF');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -84,9 +113,19 @@ export default function Dashboard() {
           <h1>Welcome back, {user?.name?.split(' ')[0]} 👋</h1>
           <p className="subtitle">Here's your carbon footprint overview</p>
         </div>
-        <Link to="/log" className="btn-primary">
-          + Log Activity
-        </Link>
+        <div className="header-actions">
+          <Link to="/log" className="btn-primary">
+            + Log Activity
+          </Link>
+          <button 
+            className="btn-export"
+            onClick={handleExportPDF}
+            disabled={exporting}
+            title="Download your carbon report as PDF"
+          >
+            {exporting ? '⏳ Exporting...' : '📄 Export Report'}
+          </button>
+        </div>
       </div>
 
       {/* Stat Cards */}
@@ -121,6 +160,12 @@ export default function Dashboard() {
           </div>
           <div className="stat-unit">{dailyAvg > 0 ? (comparisonPct > 0 ? 'Above average' : 'Below average') : 'No data yet'}</div>
         </div>
+      </div>
+
+      {/* NEW: Carbon Score & Progress Tracker */}
+      <div className="analytics-grid">
+        <CarbonScore scoreData={advanced?.carbonScore} dailyAverage={advanced?.dailyAverage} />
+        <ProgressTracker progressData={advanced?.progressTracking} />
       </div>
 
       {/* Charts Grid */}
@@ -204,7 +249,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* AI Tip Card */}
+      {/* NEW: Smart Insights Panel */}
+      <SmartInsights insights={advanced?.insights} dailyAverage={advanced?.dailyAverage} />
+
+      {/* NEW: Smart Suggestions */}
+      <SmartSuggestions suggestions={advanced?.suggestions} />
+
+      {/* Original Tip Card */}
       {summary?.tip && (
         <div className="tip-card">
           <div className="tip-header">

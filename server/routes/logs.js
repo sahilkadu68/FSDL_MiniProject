@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import ActivityLog from '../models/ActivityLog.js';
 import { calculateCO2e, getEmissionFactor, getSubcategoriesByCategory, getAllCategories } from '../utils/emissionFactors.js';
 import { generateTip } from '../utils/tips.js';
+import { calculateCarbonScore, generateSmartInsights, generateDynamicSuggestions, calculateProgressTracking } from '../utils/analytics.js';
 
 const router = express.Router();
 
@@ -14,6 +15,75 @@ router.get('/factors', (req, res) => {
     factors[cat] = getSubcategoriesByCategory(cat);
   });
   res.json({ categories, factors });
+});
+
+// GET /api/v1/logs/advanced — enhanced analytics with score, insights, suggestions, progress
+router.get('/advanced', async (req, res) => {
+  try {
+    const userId = new mongoose.Types.ObjectId(req.userId);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Calculate date ranges
+    const lastWeekStart = new Date(startOfToday);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 6);
+    
+    const prevWeekStart = new Date(startOfToday);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 13);
+    
+    const prevWeekEnd = new Date(startOfToday);
+    prevWeekEnd.setDate(prevWeekEnd.getDate() - 7);
+
+    // Get last 7 days and previous 7 days totals
+    const [lastWeekTotal, prevWeekTotal] = await Promise.all([
+      ActivityLog.aggregate([
+        { $match: { userId, loggedAt: { $gte: lastWeekStart } } },
+        { $group: { _id: null, total: { $sum: '$co2eKg' } } },
+      ]),
+      ActivityLog.aggregate([
+        { $match: { userId, loggedAt: { $gte: prevWeekStart, $lt: prevWeekEnd } } },
+        { $group: { _id: null, total: { $sum: '$co2eKg' } } },
+      ]),
+    ]);
+
+    const lastWeekEmissions = lastWeekTotal[0]?.total || 0;
+    const prevWeekEmissions = prevWeekTotal[0]?.total || 0;
+
+    // Get category breakdown for this month
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const categoryBreakdown = await ActivityLog.aggregate([
+      { $match: { userId, loggedAt: { $gte: startOfMonth } } },
+      { $group: { _id: '$category', total: { $sum: '$co2eKg' } } },
+    ]);
+
+    const categoryTotals = {
+      transport: 0,
+      food: 0,
+      energy: 0,
+    };
+    categoryBreakdown.forEach(c => {
+      categoryTotals[c._id] = c.total || 0;
+    });
+
+    // Calculate metrics
+    const dailyAverage = lastWeekEmissions / 7;
+    const carbonScore = calculateCarbonScore(dailyAverage, lastWeekEmissions);
+    const insights = generateSmartInsights(categoryTotals);
+    const suggestions = generateDynamicSuggestions(insights);
+    const progressTracking = calculateProgressTracking(lastWeekEmissions, prevWeekEmissions);
+
+    res.json({
+      carbonScore,
+      insights,
+      suggestions,
+      progressTracking,
+      weeklyTotal: parseFloat(lastWeekEmissions.toFixed(2)),
+      dailyAverage: parseFloat(dailyAverage.toFixed(2)),
+    });
+  } catch (error) {
+    console.error('Advanced analytics error:', error);
+    res.status(500).json({ error: 'Failed to generate advanced analytics.' });
+  }
 });
 
 // GET /api/v1/logs/summary — aggregated data for dashboard (MUST be before /:id)

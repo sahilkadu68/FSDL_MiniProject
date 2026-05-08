@@ -42,7 +42,11 @@ async function startServer() {
     // If no real MongoDB URI or it's the placeholder, use in-memory MongoDB
     if (!mongoUri || mongoUri.includes('<username>') || mongoUri.includes('xxxxx')) {
       console.log('⏳ Starting in-memory MongoDB (no external DB needed)...');
-      const mongod = await MongoMemoryServer.create();
+      const mongod = await MongoMemoryServer.create({
+        instance: {
+          storageEngine: 'ephemeralForTest',
+        },
+      });
       mongoUri = mongod.getUri();
       console.log('✅ In-memory MongoDB running');
       console.log('⚠️  Note: Data will reset when server restarts (fine for demo/presentation)');
